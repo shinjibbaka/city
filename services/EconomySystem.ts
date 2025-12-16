@@ -1,4 +1,4 @@
-import { MAINTENANCE_COST_PER_TILE, GRID_HEIGHT, GRID_WIDTH, BUILD_COST_ROAD, BUILD_COST_RES, BUILD_COST_IND } from "../constants";
+import { MAINTENANCE_COST_PER_TILE, BUILD_COST_ROAD, BUILD_COST_RES, BUILD_COST_IND, BUILD_COST_COM } from "../constants";
 import { TileType } from "../types";
 import { WorldState } from "./WorldState";
 
@@ -12,7 +12,6 @@ export class EconomySystem {
   public processMaintenance() {
     let maintenance = 0;
     const tiles = this.world.tiles;
-    // Calculate total maintenance
     for(let i=0; i<tiles.length; i++) {
         if (tiles[i] !== TileType.EMPTY) {
             maintenance += MAINTENANCE_COST_PER_TILE;
@@ -27,6 +26,7 @@ export class EconomySystem {
     if (type === TileType.ROAD) cost = BUILD_COST_ROAD;
     if (type === TileType.RESIDENTIAL) cost = BUILD_COST_RES;
     if (type === TileType.INDUSTRIAL) cost = BUILD_COST_IND;
+    if (type === TileType.COMMERCIAL) cost = BUILD_COST_COM;
     return this.world.funds >= cost;
   }
 
@@ -35,6 +35,7 @@ export class EconomySystem {
     if (type === TileType.ROAD) cost = BUILD_COST_ROAD;
     if (type === TileType.RESIDENTIAL) cost = BUILD_COST_RES;
     if (type === TileType.INDUSTRIAL) cost = BUILD_COST_IND;
+    if (type === TileType.COMMERCIAL) cost = BUILD_COST_COM;
     this.world.funds -= cost;
   }
 }

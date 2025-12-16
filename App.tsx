@@ -10,18 +10,20 @@ import {
   TILE_SIZE, 
   BUILD_COST_ROAD,
   BUILD_COST_RES,
-  BUILD_COST_IND
+  BUILD_COST_IND,
+  BUILD_COST_COM
 } from './constants';
 import { TileType } from './types';
 import { 
   CurrencyDollarIcon, 
   UserGroupIcon, 
   TruckIcon, 
-  EyeIcon, 
-  EyeSlashIcon, 
   TrashIcon, 
   ArrowDownTrayIcon, 
-  ArrowUpTrayIcon 
+  ArrowUpTrayIcon,
+  CubeIcon,
+  ClockIcon,
+  CommandLineIcon
 } from '@heroicons/react/24/solid';
 
 const Engine = () => {
@@ -29,7 +31,7 @@ const Engine = () => {
   
   // UI State
   const [selectedTool, setSelectedTool] = useState<TileType | 'ERASE'>(TileType.ROAD);
-  const [stats, setStats] = useState({ funds: 0, agents: 0, eff: 0 });
+  const [stats, setStats] = useState({ funds: 0, agents: 0, eff: 0, goods: 0, time: 0 });
   const [showDebug, setShowDebug] = useState(false);
   
   // Camera State
@@ -57,7 +59,6 @@ const Engine = () => {
   useEffect(() => {
     if (!canvasRef.current) return;
     
-    // Handle Window Resize
     const resizeCanvas = () => {
       if(canvasRef.current) {
         canvasRef.current.width = window.innerWidth;
@@ -100,20 +101,18 @@ const Engine = () => {
            }
            economyTimer = 0;
            
-           const efficiency = world.potentialMovesLastSec > 0 
-              ? Math.round((world.totalMovesLastSec / world.potentialMovesLastSec) * 100) 
-              : 100;
-           
            setStats({
              funds: Math.floor(world.funds),
              agents: world.activeAgentCount,
-             eff: efficiency
+             eff: 100, // Efficiency always 100 without traffic
+             goods: world.goods,
+             time: world.timeOfDay
            });
         }
       }
 
       // Render
-      systems.renderer?.renderFrame(cameraRef.current, showDebug);
+      systems.renderer?.renderFrame(cameraRef.current, false);
       animationFrameId = requestAnimationFrame(loop);
     };
 
@@ -123,9 +122,8 @@ const Engine = () => {
       cancelAnimationFrame(animationFrameId);
       window.removeEventListener('resize', resizeCanvas);
     };
-  }, [showDebug]);
+  }, []);
 
-  // Input Handling helpers
   const getWorldCoords = (screenX: number, screenY: number) => {
     const cam = cameraRef.current;
     if (!canvasRef.current) return { x: 0, y: 0 };
@@ -133,8 +131,6 @@ const Engine = () => {
     const centerX = canvasRef.current.width / 2;
     const centerY = canvasRef.current.height / 2;
 
-    // Inverse transform
-    // screen -> translate(-center) -> scale(1/s) -> translate(cam)
     const rawX = (screenX - centerX) / cam.scale + cam.x;
     const rawY = (screenY - centerY) / cam.scale + cam.y;
 
@@ -149,7 +145,6 @@ const Engine = () => {
     isPointerDown.current = true;
     lastMousePos.current = { x: e.clientX, y: e.clientY };
 
-    // Middle mouse or Spacebar (handled via separate key listener ideally, but let's use middle click) or Eraser
     if (e.button === 1 || e.button === 2) {
       isPanning.current = true;
     } else {
@@ -185,14 +180,17 @@ const Engine = () => {
       if (selectedTool === 'ERASE') {
          if (world.tiles[idx] !== TileType.EMPTY) {
             world.tiles[idx] = TileType.EMPTY;
+            world.tileLevels[idx] = 0; 
             systems.flow.updateFields();
             systems.renderer?.renderStatic();
          }
       } else {
         if (world.tiles[idx] !== selectedTool) {
+           // Cheats ignore cost? No, keep economy in normal mode. Cheat button adds money.
            if (systems.economy.canAfford(selectedTool)) {
               systems.economy.deduct(selectedTool);
               world.tiles[idx] = selectedTool;
+              world.tileLevels[idx] = 0;
               systems.flow.updateFields();
               systems.renderer?.renderStatic();
            }
@@ -205,8 +203,6 @@ const Engine = () => {
     const zoomIntensity = 0.1;
     const direction = e.deltaY > 0 ? -1 : 1;
     const scaleFactor = 1 + (zoomIntensity * direction);
-    
-    // Clamp zoom
     const newScale = Math.max(0.5, Math.min(cameraRef.current.scale * scaleFactor, 5));
     cameraRef.current.scale = newScale;
   };
@@ -214,37 +210,46 @@ const Engine = () => {
   const handleSave = () => {
     try {
       const json = worldRef.current.toJSON();
-      localStorage.setItem('cybercity_save', JSON.stringify(json));
+      localStorage.setItem('cybercity_save_v2', JSON.stringify(json));
       alert('City Saved Successfully!');
     } catch(e) {
       console.error(e);
-      alert('Failed to save (Quota exceeded?)');
+      alert('Failed to save');
     }
   };
 
   const handleLoad = () => {
     try {
-      const str = localStorage.getItem('cybercity_save');
+      const str = localStorage.getItem('cybercity_save_v2');
       if (!str) return alert('No saved city found.');
       const json = JSON.parse(str);
       worldRef.current.loadFromJSON(json);
-      
-      // Critical: Refresh systems after loading state
       systemsRef.current.flow.updateFields();
       systemsRef.current.renderer?.renderStatic();
-      
-      // Force UI Update
-      setStats({
-          funds: Math.floor(worldRef.current.funds),
-          agents: worldRef.current.activeAgentCount,
-          eff: 0
-      });
       alert('City Loaded!');
     } catch (e) {
       console.error(e);
       alert('Corrupt save file.');
     }
   };
+
+  // Cheats
+  const cheatAddMoney = () => {
+      worldRef.current.funds += 10000;
+      setStats(prev => ({ ...prev, funds: Math.floor(worldRef.current.funds) }));
+  };
+  const cheatSpawnAgents = () => {
+      systemsRef.current.agents.debugSpawn(100);
+      setStats(prev => ({ ...prev, agents: worldRef.current.activeAgentCount }));
+  };
+  const cheatKillAgents = () => {
+      systemsRef.current.agents.debugClearAgents();
+      setStats(prev => ({ ...prev, agents: 0 }));
+  };
+
+  const hour = Math.floor(stats.time * 24);
+  const minute = Math.floor((stats.time * 24 % 1) * 60);
+  const timeString = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
 
   return (
     <div className="flex h-screen w-screen bg-black text-slate-100 overflow-hidden font-mono">
@@ -253,45 +258,58 @@ const Engine = () => {
         
         {/* Header */}
         <div className="bg-slate-900/90 backdrop-blur border border-slate-700 p-4 rounded-lg shadow-xl pointer-events-auto">
-          <h1 className="text-xl font-bold text-cyan-400 mb-1 tracking-tight">CYBERCITY <span className="text-white font-light">STREAM</span></h1>
-          <p className="text-[10px] text-slate-400 uppercase tracking-widest">DOD SIMULATION // 60FPS</p>
+          <h1 className="text-xl font-bold text-cyan-400 mb-1 tracking-tight">CYBERCITY <span className="text-white font-light">PEDESTRIAN</span></h1>
+          <div className="flex justify-between items-center mt-2">
+            <span className="text-[10px] text-slate-400 uppercase tracking-widest">NO CARS // FLUID SIM</span>
+            <div className="flex items-center text-xs text-yellow-500 gap-1 bg-black/40 px-2 py-1 rounded">
+               <ClockIcon className="h-3 w-3" />
+               {timeString}
+            </div>
+          </div>
         </div>
 
         {/* Stats */}
         <div className="bg-slate-900/90 backdrop-blur border border-slate-700 p-3 rounded-lg shadow-xl space-y-3 pointer-events-auto">
            <StatRow icon={<CurrencyDollarIcon className="h-4 w-4 text-emerald-400"/>} label="FUNDS" value={stats.funds.toLocaleString()} />
-           <StatRow icon={<UserGroupIcon className="h-4 w-4 text-blue-400"/>} label="AGENTS" value={stats.agents.toLocaleString()} />
-           <StatRow icon={<TruckIcon className="h-4 w-4 text-yellow-400"/>} label="FLOW" value={`${stats.eff}%`} />
+           <StatRow icon={<UserGroupIcon className="h-4 w-4 text-blue-400"/>} label="CITIZENS" value={stats.agents.toLocaleString()} />
+           <StatRow icon={<CubeIcon className="h-4 w-4 text-purple-400"/>} label="GOODS" value={stats.goods.toLocaleString()} />
         </div>
 
         {/* Tools */}
         <div className="bg-slate-900/90 backdrop-blur border border-slate-700 p-3 rounded-lg shadow-xl space-y-2 pointer-events-auto">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Build Systems</p>
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Construction</p>
           
           <ToolButton 
              active={selectedTool === TileType.ROAD} 
              onClick={() => setSelectedTool(TileType.ROAD)}
              color="bg-slate-700 hover:bg-slate-600 border-slate-500"
              activeColor="bg-slate-600 border-white text-white shadow-[0_0_10px_rgba(255,255,255,0.3)]"
-             label={`ROAD ($${BUILD_COST_ROAD})`}
+             label={`PAVEMENT ($${BUILD_COST_ROAD})`}
           />
           <ToolButton 
              active={selectedTool === TileType.RESIDENTIAL} 
              onClick={() => setSelectedTool(TileType.RESIDENTIAL)}
              color="bg-emerald-900/50 hover:bg-emerald-900/80 border-emerald-800"
              activeColor="bg-emerald-600 border-emerald-400 text-white shadow-[0_0_15px_rgba(16,185,129,0.5)]"
-             label={`RESIDENTIAL ($${BUILD_COST_RES})`}
+             label={`APARTMENTS ($${BUILD_COST_RES})`}
           />
           <ToolButton 
              active={selectedTool === TileType.INDUSTRIAL} 
              onClick={() => setSelectedTool(TileType.INDUSTRIAL)}
              color="bg-blue-900/50 hover:bg-blue-900/80 border-blue-800"
              activeColor="bg-blue-600 border-blue-400 text-white shadow-[0_0_15px_rgba(59,130,246,0.5)]"
-             label={`INDUSTRIAL ($${BUILD_COST_IND})`}
+             label={`INDUSTRY ($${BUILD_COST_IND})`}
+          />
+          <ToolButton 
+             active={selectedTool === TileType.COMMERCIAL} 
+             onClick={() => setSelectedTool(TileType.COMMERCIAL)}
+             color="bg-purple-900/50 hover:bg-purple-900/80 border-purple-800"
+             activeColor="bg-purple-600 border-purple-400 text-white shadow-[0_0_15px_rgba(147,51,234,0.5)]"
+             label={`SHOPS ($${BUILD_COST_COM})`}
           />
         </div>
 
-        {/* Utilities */}
+        {/* Utilities & Debug Toggle */}
         <div className="bg-slate-900/90 backdrop-blur border border-slate-700 p-2 rounded-lg shadow-xl grid grid-cols-4 gap-2 pointer-events-auto">
            <IconButton 
               active={selectedTool === 'ERASE'} 
@@ -302,8 +320,8 @@ const Engine = () => {
            <IconButton 
               active={showDebug} 
               onClick={() => setShowDebug(!showDebug)}
-              icon={showDebug ? <EyeIcon className="h-5 w-5"/> : <EyeSlashIcon className="h-5 w-5"/>}
-              title="Toggle Debug"
+              icon={<CommandLineIcon className="h-5 w-5 text-green-500"/>}
+              title="Debug / Cheats"
            />
            <IconButton 
               onClick={handleSave}
@@ -316,10 +334,16 @@ const Engine = () => {
               title="Load City"
            />
         </div>
-        
-        <div className="text-[10px] text-slate-500 bg-black/50 p-2 rounded pointer-events-auto">
-          Scroll to Zoom • Right-Click to Pan
-        </div>
+
+        {/* Debug Menu */}
+        {showDebug && (
+            <div className="bg-red-900/90 backdrop-blur border border-red-600 p-3 rounded-lg shadow-xl space-y-2 pointer-events-auto animate-pulse">
+                <p className="text-[10px] font-bold text-red-200 uppercase tracking-widest mb-1">ADMIN ACCESS</p>
+                <button onClick={cheatAddMoney} className="w-full text-xs bg-red-800 hover:bg-red-700 border border-red-500 py-1 px-2 rounded font-mono">+ $10,000</button>
+                <button onClick={cheatSpawnAgents} className="w-full text-xs bg-red-800 hover:bg-red-700 border border-red-500 py-1 px-2 rounded font-mono">FORCE SPAWN (100)</button>
+                <button onClick={cheatKillAgents} className="w-full text-xs bg-red-800 hover:bg-red-700 border border-red-500 py-1 px-2 rounded font-mono">KILL ALL AGENTS</button>
+            </div>
+        )}
       </div>
 
       {/* Canvas */}
@@ -364,7 +388,7 @@ const IconButton = ({ active, onClick, icon, title }: any) => (
     title={title}
     className={`flex justify-center items-center py-2 rounded border transition-all ${
       active 
-      ? 'bg-red-500 border-red-400 text-white shadow-[0_0_10px_rgba(244,63,94,0.5)]' 
+      ? 'bg-slate-700 border-white text-white' 
       : 'bg-slate-800 border-slate-600 text-slate-400 hover:bg-slate-700'
     }`}
   >
